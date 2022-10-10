@@ -1,0 +1,18 @@
+[flake8]
+ignore =
+    W503,  # line break before binary operator (conflict with black)
+
+exclude =
+
+count = True
+statistics = True
+
+doctests = True
+show-source = True
+
+# I find the default 79 characters is sometimes too restrictive.
+# Also, I've utilised black which formats most of the long lines,
+# and pylint (less strict).
+max-line-length = 99
+
+max-doc-length = 99
