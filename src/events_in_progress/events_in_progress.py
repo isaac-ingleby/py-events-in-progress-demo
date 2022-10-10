@@ -34,6 +34,7 @@ import sys
 @dataclass
 class VideoPlayEvent:
     """A simple dataclass object from which we can pull attributes."""
+
     index: int
     start_time: float  # unix timestamp
     end_time: float  # unix timestamp
@@ -59,11 +60,11 @@ def get_timestamp(
 
     try:
         start_time = re_search(f"{timestamp_type}:(.*)", event_line).group(1)
-    except AttributeError:
+    except AttributeError as err:
         raise AttributeError(
             f"A line is malformed on line {event_line_count} of '{event_file}', expected "
             f"timestamp float to be presented after {timestamp_type}.\nFull line: {event_line}"
-        )
+        ) from err
 
     return float(start_time)
 
@@ -87,7 +88,7 @@ def generate_data_group(event_path: str) -> List[VideoPlayEvent]:
     open_event = False
     event_count = 0  # there may be multiple events per file, keep track of
 
-    for file_count, event_file in enumerate(Path(event_path).glob("*")):
+    for event_file in Path(event_path).glob("*"):
         # print(event_file.read_text())
         line_count = 0
         for event_line in event_file.read_text().replace(" ", "").splitlines():
@@ -127,7 +128,7 @@ if __name__ == "__main__":
 
     # some very basic data analysis for now, more complex logic to follow
     # (and eventually be moved to their own functions)
-    minimum_start_time = min([event.start_time for event in data])
-    maximum_end_time = max([event.end_time for event in data])
+    minimum_start_time = min(event.start_time for event in data)
+    maximum_end_time = max(event.end_time for event in data)
 
     print(data, f"minimum_start_time={minimum_start_time}, maximum_end_time={maximum_end_time}.")
