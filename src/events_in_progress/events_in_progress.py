@@ -33,7 +33,7 @@ from typing import List, Tuple
 
 
 @dataclass
-class VideoPlayEvent:
+class VideoPlayEvent:  # pylint: disable=too-many-instance-attributes
     """A dataclass object from which we can pull attributes."""
 
     index: int
@@ -42,7 +42,7 @@ class VideoPlayEvent:
 
     def __post_init__(self):
         """SQLite has limited support for datetime, so I'm adding some functionality to manage it
-        via the class. This was mainly used in early debugging stages.
+        via the class.
         """
         self.start_dtime = datetime.fromtimestamp(self.start_time)
         self.end_dtime = datetime.fromtimestamp(self.end_time)
@@ -202,7 +202,7 @@ def drop_and_create_table(connection: Connection, table_name: str, columns: List
         f"""
     CREATE TABLE {table_name} (
         {", ".join([f"{col.name} {col.datatype}" for col in columns])}
-    )     
+    )
     """
     )
 
@@ -247,10 +247,10 @@ def calculate_max_concurrent_events(
       JOIN {source_table} AS r2  -- drop rows that don't intersect
         ON r2.startTime <= r1.EndTime
        AND r1.startTime <= r2.EndTime
-       AND r1.rn != r2.rn  -- don't include rows that intersect with themselves 
+       AND r1.rn != r2.rn  -- don't include rows that intersect with themselves
     ),
            event_with_most_date_intersects AS (
-        -- Now we will find the event that most frequently intersects other events  
+        -- Now we will find the event that most frequently intersects other events
     SELECT rnLeft,
            COUNT(rnLeft) AS frequency_count--,
 
@@ -261,7 +261,7 @@ def calculate_max_concurrent_events(
     ),
            events_shared_time_period AS (
         -- Now we find the maximum time_period all events covered that intersected the
-        -- most frequent event 
+        -- most frequent event
     SELECT events.rnLeft,
            MAX(events.StartOfIntersect) AS StartOfIntersect,
            MIN(events.EndOfIntersect) AS EndOfIntersect
@@ -271,7 +271,7 @@ def calculate_max_concurrent_events(
         ON event.rnLeft = events.rnLeft
     )
     INSERT INTO {target_table}
-        -- Insert events that intersect that along with some information on how they intersect 
+        -- Insert events that intersect that along with some information on how they intersect
     SELECT ewdi.rnRight AS rn,
            ewdi.startTimeRight AS eventStart,
            ewdi.endTimeRight AS eventEnd,
@@ -370,7 +370,7 @@ def run():
         )
 
         cursor.executemany(  # SQLite syntax to insert these events into the events.events table
-            f" INSERT INTO events_raw VALUES (?,?,?)",
+            " INSERT INTO events_raw VALUES (?,?,?)",
             [event.return_core_attributes() for event in cleaned_events],
         )
 
