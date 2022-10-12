@@ -1,10 +1,10 @@
 # the first event is 45 minutes in length whilst the next is three hours
 VideoPlay {
-startTime : 1665425095.589787
-endTime : 1665427795.589787
+startTime : 2022-10-11 19:01:55
+endTime : 2022-10-11 19:46:55
 }
 
 VideoPlay {
-startTime : 1665425095.589787
-endTime : 1665435895.589787
+startTime : 2022-10-11 19:01:55
+endTime : 2022-10-11 22:01:55
 }
