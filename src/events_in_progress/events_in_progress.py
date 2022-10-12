@@ -143,9 +143,7 @@ def generate_event_group(event_path: Path) -> List[VideoPlayEvent]:
                     "startTime", event_line, event_file, line_count
                 )
             elif event_line.startswith("endTime") and open_event:
-                end_time = get_timestamp_from_events(
-                    "endTime", event_line, event_file, line_count
-                )
+                end_time = get_timestamp_from_events("endTime", event_line, event_file, line_count)
             elif event_line.endswith("}") and open_event and start_time and end_time:
                 # only triggered if start_time and end_time are not None
                 data_group.append(VideoPlayEvent(event_count, start_time, end_time))
@@ -373,7 +371,7 @@ def run():
 
         cursor.executemany(  # SQLite syntax to insert these events into the events.events table
             f" INSERT INTO events_raw VALUES (?,?,?)",
-            [event.return_core_attributes() for event in cleaned_events]
+            [event.return_core_attributes() for event in cleaned_events],
         )
 
         calculate_max_concurrent_events(
