@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from re import search as re_search
+from sqlite3 import Connection
 from typing import List, Tuple
 
 
@@ -41,7 +42,7 @@ class VideoPlayEvent:
 
     def __post_init__(self):
         """SQLite has limited support for datetime, so I'm adding some functionality to manage it
-        via the class.
+        via the class. This was mainly used in debugging stage
         """
         self.start_dtime = datetime.fromtimestamp(self.start_time)
         self.end_dtime = datetime.fromtimestamp(self.end_time)
@@ -117,7 +118,7 @@ def generate_event_group(event_path: Path) -> List[VideoPlayEvent]:
     event_count = 0  # there may be multiple events per file, keep track of
 
     for event_file in event_path.glob("*"):
-        # print(event_file.read_text())
+
         line_count = 0
         for event_line in event_file.read_text().replace(" ", "").splitlines():
             if event_line.startswith("#"):
@@ -153,6 +154,48 @@ def generate_event_group(event_path: Path) -> List[VideoPlayEvent]:
     return data_group
 
 
+def get_table_results(connection: Connection, table: str) -> str:
+    """Return the results of the table as a string. Meant to somewhat mimic the behaviour of Sparks
+    `Dataframe.show()`.
+
+    Args:
+        connection: The SQLite connection with which the function will query the result.
+        table: The table you wish to query.
+
+    Returns:
+        The query result as a string.
+    """
+    cursor = connection.cursor()
+
+    # return results of query
+    cursor.execute(f"SELECT * FROM {table}")
+    query_result = cursor.fetchall()
+
+    # extract column names for formatting from table schema info
+    cursor.execute("PRAGMA table_info(events_max_simultaneous)")
+    columns_names = [column_info[1] for column_info in cursor.fetchall()]
+
+    formatted_result = ""  # add to this string
+
+    # define the borders
+    column_title = f"{'-' * 20}+"
+    border_string = f"+{column_title * 5}"
+    formatted_dt_col_names = [f"{col}".ljust(20) for col in columns_names]
+    column_name_str = f"|{'|'.join(formatted_dt_col_names)}|"
+    formatted_result += f"{border_string}\n{column_name_str}\n{border_string}\n"
+
+    # define how the table contents are presented
+    for row in query_result:
+        formatted_result += (  # attempt to prettify the output somewhat
+            f"|{str(row[0]).ljust(20)}|{get_dt_from_tstamp(row[1])} "
+            f"|{get_dt_from_tstamp(row[2])} |{get_dt_from_tstamp(row[3])} "
+            f"|{get_dt_from_tstamp(row[4])} |\n"
+        )
+    formatted_result += border_string
+
+    return formatted_result
+
+
 def run():
     """Executes the main logic and outputs information to terminal via print function."""
 
@@ -176,8 +219,6 @@ def run():
         f"Maximum event end time: {get_dt_from_tstamp(max_end_time)}.\n"
     )
 
-    sample = cleaned_events[0]
-    # print(sample.index, sample.start_time, sample.end_time)
     with sqlite3.connect(directory_root / "events.db") as conn:  # connect to sqlite3 database
         cursor = conn.cursor()  # create a cursor
 
@@ -192,16 +233,15 @@ def run():
         """
         )
 
-        cursor.execute("DROP TABLE IF EXISTS events_processed")
+        cursor.execute("DROP TABLE IF EXISTS events_max_simultaneous")
         cursor.execute(
             """
-        CREATE TABLE events_processed (
-            rnLeft INTEGER,
-            StartTimeLeft INTEGER,
-            EndTimeLeft INTEGER,
-            rnRight INTEGER,
-            StartTimeRight INTEGER,
-            EndTimeRight INTEGER
+        CREATE TABLE events_max_simultaneous (
+            rn INTEGER,
+            eventStart INTEGER,
+            eventEnd INTEGER,
+            StartOfIntersect INTEGER,
+            EndOfIntersect INTEGER
         )
         """
         )
@@ -211,49 +251,74 @@ def run():
             [event.return_core_attributes() for event in cleaned_events]
         )
 
-        cursor.execute("SELECT * FROM events_raw")  # just a check that values are returned
-
         cursor.execute(  # this logic will find overlaps in time and eliminate all else.
             """
-        INSERT INTO events_processed
+          WITH events_with_date_intersects AS (
+            -- first we need to calculate the beginning and end of the event intersect
+            -- provided they intersect at all
         SELECT r1.rn AS rnLeft,
                r1.startTime AS startTimeLeft,
                r1.endTime AS endTimeLeft,
                r2.rn AS rnRight,
                r2.startTime AS startTimeRight,
-               r2.endTime AS endTimeRight
+               r2.endTime AS endTimeRight,
+               -- these CASE statements would need expanding to cover more scenarios in the real
+               -- world, but here they are adequate to pull out the correct dates
+               CASE
+                 WHEN r2.startTime <= r1.endTime
+                 THEN r2.startTime
+               END AS StartOfIntersect,
+               CASE
+                 WHEN r1.endTime >= r2.startTime
+                 THEN r1.endTime
+               END AS EndOfIntersect
 
           FROM events_raw AS r1
           JOIN events_raw AS r2  -- drop rows that don't intersect
             ON r2.startTime <= r1.EndTime
            AND r1.startTime <= r2.EndTime
-           AND r1.rn != r2.rn
+           AND r1.rn != r2.rn  -- don't include rows that intersect with themself 
+        ),
+               event_with_most_date_intersects AS (
+            -- Now we will find the event that most frequently intersects other events  
+        SELECT rnLeft,
+               COUNT(rnLeft) AS frequency_count--,
+
+          FROM events_with_date_intersects
+      GROUP BY rnLeft
+      ORDER BY frequency_count DESC
+         LIMIT 1
+        ),
+               events_shared_time_period AS (
+            -- Now we find the maximum time_period all events covered that intersected the
+            -- most frequent event 
+        SELECT events.rnLeft,
+               MAX(events.StartOfIntersect) AS StartOfIntersect,
+               MIN(events.EndOfIntersect) AS EndOfIntersect
+               
+          FROM events_with_date_intersects AS events
+          JOIN event_with_most_date_intersects AS event
+            ON event.rnLeft = events.rnLeft
+        )
+        INSERT INTO events_max_simultaneous
+            -- Insert events that intersect that along with some information on how they intersect 
+        SELECT ewdi.rnRight AS rn,
+               ewdi.startTimeRight AS eventStart,
+               ewdi.endTimeRight AS eventEnd,
+               estp.StartOfIntersect,
+               estp.EndOfIntersect
+               
+          FROM events_shared_time_period AS estp
+          JOIN events_with_date_intersects AS ewdi
+            ON ewdi.rnLeft = estp.rnLeft
+           AND ewdi.StartOfIntersect <= estp.StartOfIntersect
+           AND ewdi.EndOfIntersect >= estp.EndOfIntersect
         """
         )
-
-        cursor.execute("SELECT * FROM events_processed")
-        cursor_result_processed = cursor.fetchall()
-
-        # get the row number that most often intersects others
-        current_max_count = 0
-        most_frequent_intersecting_rn = -1  # something implausible for now, we'll replace it later
-        row_numbers = [row_result[0] for row_result in cursor_result_processed]
-        for row_number in row_numbers:
-            # print(row_number)
-            rn_frequency = row_numbers.count(row_number)
-            if rn_frequency > current_max_count:
-                current_max_count = rn_frequency
-                most_frequent_intersecting_rn = row_number
-
-        for row_result in cursor_result_processed:
-            if row_result[0] == most_frequent_intersecting_rn:  # filter for the most frequent rn
-                print(  # attempt to prettify the output somewhat
-                    f"|{row_result[0]}  |{get_dt_from_tstamp(row_result[1])} "
-                    f"|{get_dt_from_tstamp(row_result[2])} |{row_result[3]} "
-                    f"|{get_dt_from_tstamp(row_result[4])} |{get_dt_from_tstamp(row_result[5])} |",
-                )
-
         conn.commit()
+
+        table_result = get_table_results(connection=conn, table="events_max_simultaneous")
+        print(table_result)
 
 
 if __name__ == "__main__":
