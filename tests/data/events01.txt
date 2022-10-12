@@ -1,0 +1,5 @@
+# this event is one hour in length
+VideoPlay {
+startTime : 2022-10-11 19:01:55
+endTime : 2022-10-11 20:01:55
+}

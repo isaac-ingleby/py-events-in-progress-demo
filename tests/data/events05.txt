@@ -1,0 +1,10 @@
+# the first event is 45 minutes in length whilst the next is three hours
+VideoPlay {
+startTime : 2022-10-11 19:01:55
+endTime : 2022-10-11 19:46:55
+}
+
+VideoPlay {
+startTime : 2022-10-11 19:01:55
+endTime : 2022-10-11 22:01:55
+}
