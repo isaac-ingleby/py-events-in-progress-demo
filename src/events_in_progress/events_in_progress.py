@@ -275,25 +275,39 @@ def calculate_max_concurrent_events(
        AND r1.rn != r2.rn  -- don't include rows that intersect with themselves
     ),
            event_with_most_date_intersects AS (
-        -- Now we will find the event that most frequently intersects other events
+        -- Now we will find an event that most frequently intersects other events, however take
+        -- note that further logic will be required to capture other events in the rare scenario
+        -- that multiple event intersections come to the same count.
     SELECT rnLeft,
-           COUNT(rnLeft) AS frequency_count--,
+           COUNT(rnLeft) AS frequency_count
 
       FROM events_with_date_intersects
   GROUP BY rnLeft
   ORDER BY frequency_count DESC
      LIMIT 1
     ),
+           event_intersect_counts AS (
+        -- here, we're just getting the counts off all interventions
+    SELECT rnLeft,
+           COUNT(rnLeft) AS frequency_count
+
+      FROM events_with_date_intersects
+  GROUP BY rnLeft
+    ),
            events_shared_time_period AS (
         -- Now we find the maximum time_period all events covered that intersected the
-        -- most frequent event
+        -- most frequent events
     SELECT events.rnLeft,
            MAX(events.StartOfIntersect) AS StartOfIntersect,
            MIN(events.EndOfIntersect) AS EndOfIntersect
 
       FROM events_with_date_intersects AS events
-      JOIN event_with_most_date_intersects AS event
-        ON event.rnLeft = events.rnLeft
+      JOIN event_intersect_counts AS counts
+        ON counts.rnLeft = events.rnLeft
+        -- As stated above, there is the possibility for multiple events to be joint first in
+        -- number of intersections. Exclude any others that don't intersect as often.
+      JOIN event_with_most_date_intersects AS most_frequent_event
+        ON most_frequent_event.frequency_count = counts.frequency_count
     )
     INSERT INTO {target_table}
         -- Insert events that intersect that along with some information on how they intersect
