@@ -58,11 +58,26 @@ class VideoPlayEvent:  # pylint: disable=too-many-instance-attributes
 
 
 @dataclass
-class Column:
-    """A basic dataclass to store column names and datatype"""
+class TableInfo:
+    """A basic dataclass to store table name, column names, and datatype"""
 
-    name: str
-    datatype: str
+    db_name: str
+    db_schema: List[str]
+
+
+events_raw = TableInfo(
+    db_name="events_raw", db_schema=["rn INTEGER", "StartTime INTEGER", "EndTime INTEGER"]
+)
+events_max_simultaneous = TableInfo(
+    db_name="events_max_simultaneous",
+    db_schema=[
+        "rn INTEGER",
+        "eventStart INTEGER",
+        "eventEnd INTEGER",
+        "StartOfIntersect INTEGER",
+        "EndOfIntersect INTEGER",
+    ],
+)
 
 
 def get_dt_from_tstamp(timestamp: float) -> datetime:
@@ -124,6 +139,7 @@ def generate_event_group(event_path: Path) -> List[VideoPlayEvent]:
     #  open_event flag ensures events are only recorded when they begin properly with a '{'
     open_event = False
     event_count = 0  # there may be multiple events per file, keep track of
+    start_time, end_time = None, None  # provide default values
 
     for event_file in event_path.glob("*"):
 
@@ -160,48 +176,57 @@ def generate_event_group(event_path: Path) -> List[VideoPlayEvent]:
     return data_group
 
 
-def get_basic_stats(
-    full_events: List[VideoPlayEvent], plausible_events: List[VideoPlayEvent]
-) -> str:
-    """Output basic statistics for the user.
+def get_plausible_events(
+    full_events: List[VideoPlayEvent], display: bool = False
+) -> List[VideoPlayEvent]:
+    """Extract a list of plausible events from all events provided. Can provide basic statistics
+    for the user by utilising the display parameter.
 
     Args:
         full_events: The raw VideoPlayEvent instances pulled from event records.
         plausible_events: The VideoPlayEvent instances that pass business rules.
+        display: Allows user the option of printing some basic findings to the terminal.
 
     Returns:
         Basic information about the results as a string.
     """
 
-    # some very basic data analysis
-    min_start_time = min(event.start_time for event in plausible_events)
-    max_end_time = max(event.end_time for event in plausible_events)
+    # eliminate events that don't make much sense (I've interpreted "few" as 3)
+    plausible_events = [
+        event for event in full_events if event.is_3_hours_or_less and event.start_proceeds_end
+    ]
 
     # report output
-    return (
-        f"Full number of events: {len(full_events)}.\n"
-        f"Number of viable events: {len(plausible_events)}.\n"
-        f"Minimum event start time: {get_dt_from_tstamp(min_start_time)}.\n"
-        f"Maximum event end time: {get_dt_from_tstamp(max_end_time)}.\n"
-    )
+    if display:
+        # some very basic data analysis
+        min_start_time = min(event.start_time for event in plausible_events)
+        max_end_time = max(event.end_time for event in plausible_events)
+
+        print(
+            f"Full number of events: {len(full_events)}.\n"
+            f"Number of viable events: {len(plausible_events)}.\n"
+            f"Minimum event start time: {get_dt_from_tstamp(min_start_time)}.\n"
+            f"Maximum event end time: {get_dt_from_tstamp(max_end_time)}.\n"
+        )
+
+    return plausible_events
 
 
-def drop_and_create_table(connection: Connection, table_name: str, columns: List[Column]) -> None:
+def drop_and_create_table(connection: Connection, table_info: TableInfo) -> None:
     """Automate the drop and creating steps for tables in the database.
 
     Args:
         connection: The SQLite connection with which the function will query the result.
-        table_name: The table to be set up.
-        columns: The column names and schema.
+        table_info: Information on the table to be set up, including name of the table and schema.
     """
 
     cursor = connection.cursor()
 
-    cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
+    cursor.execute(f"DROP TABLE IF EXISTS {table_info.db_name}")
     cursor.execute(
         f"""
-    CREATE TABLE {table_name} (
-        {", ".join([f"{col.name} {col.datatype}" for col in columns])}
+    CREATE TABLE {table_info.db_name} (
+        {", ".join(table_info.db_schema)}
     )
     """
     )
@@ -288,13 +313,14 @@ def calculate_max_concurrent_events(
     connection.commit()
 
 
-def get_table_results(connection: Connection, target_table: str) -> str:
+def get_table_results(connection: Connection, target_table: str, display=False) -> str:
     """Return the results of the table as a string. Meant to somewhat mimic the behaviour of Sparks
     `Dataframe.show()`.
 
     Args:
         connection: The SQLite connection with which the function will query the result.
         target_table: The table you wish to query.
+        display: Allows user the option of printing results to the terminal.
 
     Returns:
         The query result as a string.
@@ -327,6 +353,9 @@ def get_table_results(connection: Connection, target_table: str) -> str:
         )
     formatted_result += border_string  # append a border to the bottom
 
+    if display:
+        print(formatted_result)
+
     return formatted_result
 
 
@@ -337,49 +366,33 @@ def run():
 
     events = generate_event_group(directory_root / "tests" / "data")
 
-    cleaned_events = [  # eliminate events that don't make much sense (I've interpreted "few" as 3)
-        event for event in events if event.is_3_hours_or_less and event.start_proceeds_end
-    ]
-
-    basic_facts = get_basic_stats(events, cleaned_events)
-    print(basic_facts)
-
     with sqlite3.connect(directory_root / "events.db") as conn:  # connect to sqlite3 database
         cursor = conn.cursor()  # create a cursor
 
         drop_and_create_table(
             connection=conn,
-            table_name="events_raw",
-            columns=[
-                Column("rn", "INTEGER"),
-                Column("StartTime", "INTEGER"),
-                Column("EndTime", "INTEGER"),
-            ],
+            table_info=events_raw,
         )
-
         drop_and_create_table(
             connection=conn,
-            table_name="events_max_simultaneous",
-            columns=[
-                Column("rn", "INTEGER"),
-                Column("eventStart", "INTEGER"),
-                Column("eventEnd", "INTEGER"),
-                Column("StartOfIntersect", "INTEGER"),
-                Column("EndOfIntersect", "INTEGER"),
-            ],
+            table_info=events_max_simultaneous,
         )
 
+        plausible_events = get_plausible_events(events, display=True)
         cursor.executemany(  # SQLite syntax to insert these events into the events.events table
             " INSERT INTO events_raw VALUES (?,?,?)",
-            [event.return_core_attributes() for event in cleaned_events],
+            [event.return_core_attributes() for event in plausible_events],
         )
 
         calculate_max_concurrent_events(
-            connection=conn, source_table="events_raw", target_table="events_max_simultaneous"
+            connection=conn,
+            source_table=events_raw.db_name,
+            target_table=events_max_simultaneous.db_name,
         )
 
-        table_result = get_table_results(connection=conn, target_table="events_max_simultaneous")
-        print(table_result)
+        get_table_results(
+            connection=conn, target_table=events_max_simultaneous.db_name, display=True
+        )
 
 
 if __name__ == "__main__":
